@@ -218,32 +218,23 @@ std::string elapsedTime(std::chrono::system_clock::time_point start)
 	return std::to_string(elapsed.count()) + "ms";
 }
 
-int main(int argc, char* argv[])
+vector<MarkovChain> markovChains;
+int itersPerThread;
+vector<string> bestStrings;
+vector<int> bestScores;
+
+void* workerFunc(void* arg)
 {
-	auto start = std::chrono::system_clock::now();
-
-	string filename = argv[1];
-	int order = std::stoi(argv[2]);
-	int nThreads = std::stoi(argv[3]);
-	int itersPerThread = std::stoi(argv[4]);
-
-	cout << "File: " << filename << ", order: " << order << ", nThreads: " << nThreads << ", iters per thread: " << itersPerThread << "\n";
-
-	std::ifstream t(filename);
-	std::string data((std::istreambuf_iterator<char>(t)), std::istreambuf_iterator<char>());
-	t.close();
-
-	MarkovChain markov(order, 1);
-	markov.analyze(data);
-	
+	int id = (int)arg;
+	//printf("%d\n", id);
 	string bestStr = "";
 	int bestScore = 0;
-	for (int j = 0; j < itersPerThread; j++)
+	for (int i = 0; i < itersPerThread; i++)
 	{
 		string output = "";
-		while(output.size() < 136)
+		while (output.size() < 136)
 		{
-			string next = markov.generateNextIntelligent();
+			string next = markovChains[id].generateNextIntelligent();
 			if (next == "") { break; }
 			output += next;
 		}
@@ -252,10 +243,74 @@ int main(int argc, char* argv[])
 			bestStr = output;
 			bestScore = constraintScore(output, CONSTRAINT_TABLE);
 		}
-		markov.clear();
+		markovChains[id].clear();
 		output = "";
 	}
 
+	bestStrings[id] = bestStr;
+	bestScores[id] = bestScore;
+
+	return (void*)1;
+}
+
+int main(int argc, char* argv[])
+{
+	auto start = std::chrono::system_clock::now();
+
+	string filename = argv[1];
+	int order = std::stoi(argv[2]);
+	int nThreads = std::stoi(argv[3]);
+	itersPerThread = std::stoi(argv[4]);
+
+	cout << "File: " << filename << ", order: " << order << ", nThreads: " << nThreads << ", iters per thread: " << itersPerThread << "\n";
+
+	std::ifstream t(filename);
+	std::string data((std::istreambuf_iterator<char>(t)), std::istreambuf_iterator<char>());
+	t.close();
+
+	std::vector<pthread_t> rowWorkers(nThreads);
+	std::vector<int> rowResult(nThreads);
+
+	for (int i = 0; i < nThreads; i++)
+	{
+		markovChains.push_back(MarkovChain(order, i*i));
+		markovChains[i].analyze(data);
+
+		bestStrings.push_back("");
+		bestScores.push_back(0);
+	}
+
+	for (int i = 0; i < nThreads; i++)
+	{
+		pthread_create(&rowWorkers[i], NULL, workerFunc, (void*)i);
+	}
+	printf("Created worker threads.\n");
+
+	//join all of them
+	for (int i = 0; i < nThreads; i++)
+	{
+		pthread_join(rowWorkers[i], (void**)&rowResult[i]);
+	}
+
+	//print thread status
+	printf("Thread status: ");
+	for (int i = 0; i < nThreads; i++)
+	{
+		printf("%d ", rowResult[i]);
+	}
+	printf("\n");
+
+
+	string bestStr = "";
+	int bestScore = 0;
+	for (int i = 0; i < nThreads; i++)
+	{
+		if (bestScores[i] > bestScore)
+		{
+			bestStr = bestStrings[i];
+			bestScore = bestScores[i];
+		}
+	}
 
 	cout << bestStr << "\nScore: " << bestScore << "\n";
 
